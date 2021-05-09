@@ -189,7 +189,7 @@ module.exports = class AToursBot {
         if (channel) {
           const msg = channel.messages.cache.get(to.message);
           if (msg) {
-            const translatedContent = receiver.translate ? await this.translate(this.preprocess(message.content, replaceList)) : '';
+            const translatedContent = to.translate ? await this.translate(this.preprocess(message.content, replaceList)) : '';
             const newMessage = this.generateForwardingMessage(message, authorDisplayName, channel.guild.id == message.channel.guild.id, translatedContent);
             await msg.edit(
               to.mentionIds ?
