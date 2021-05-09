@@ -1,205 +1,253 @@
 const Discord = require('discord.js');
+const axios = require('axios');
 
 module.exports = class AToursBot {
-    constructor(loggerId) {
-        // regular expression of the message to be forwarded
-        this.REGEX_MESSAGE = /.+/;
-        this.client = new Discord.Client();
-        this.loggerId = loggerId;
-        this.rules = {};
-        this.forwardedMessageMap = [];
-    }
+  constructor(loggerId, accessKey, accessRegion) {
+    // regular expression of the message to be forwarded
+    this.REGEX_MESSAGE = /.+/;
+    this.client = new Discord.Client();
+    this.loggerId = loggerId;
+    this.rules = {};
+    this.replaceList = {};
+    this.forwardedMessageMap = [];
+    this.accessKey = accessKey;
+    this.accessRegion = accessRegion;
+  }
 
-    addRule(senderId, receivers) {
-        this.rules[senderId] = receivers;
-    }
+  addRule(senderId, receivers, replaceList=[]) {
+    this.rules[senderId] = receivers;
+    this.replaceList[senderId] = replaceList;
+  }
 
-    getChannel(param1, param2) {
-        const guildId = param2 ? param1 : param1.split('/')[0];
-        const channelId = param2 ? param2 : param1.split('/')[1];
-        return this.client.channels.cache.find(c => c.guild.id === guildId && c.id === channelId);
-    }
+  getChannel(param1, param2) {
+    const guildId = param2 ? param1 : param1.split('/')[0];
+    const channelId = param2 ? param2 : param1.split('/')[1];
+    return this.client.channels.cache.find(c => c.guild.id === guildId && c.id === channelId);
+  }
 
-    getChannels(ids) {
-        return this.client.channels.cache.filter(c => ids.includes(`${c.guild.id}/${c.id}`));
-    }
+  getChannels(ids) {
+    return this.client.channels.cache.filter(c => ids.includes(`${c.guild.id}/${c.id}`));
+  }
 
-    formatChannel(channel) {
-        return channel ? `${channel.name}(${channel.guild.name})` : ''
-    }
+  formatChannel(channel) {
+    return channel ? `${channel.name}(${channel.guild.name})` : ''
+  }
 
-    formatMentionIds(ids) {
-        return ids ? ids.map(id => `<@&${id}>`).join(' ') : ''
-    }
+  formatMentionIds(ids) {
+    return ids ? ids.map(id => `<@&${id}>`).join(' ') : ''
+  }
 
-    generateForwardingMessage(originalMessage, authorDisplayName, isSameServer = false) {
-        return {
-            embed: {
-                author: {
-                    name: isSameServer ?
-                        `${authorDisplayName}` :
-                        `${authorDisplayName} from ${originalMessage.guild.name}`,
-                    icon_url: originalMessage.author.displayAvatarURL()
-                },
-                description: '',
-                color: 7506394,
-            }
-        }
+  generateForwardingMessage(originalMessage, authorDisplayName, isSameServer = false, translatedContent) {
+    return {
+      embed: {
+        author: {
+          name: isSameServer ?
+            `${authorDisplayName}` :
+            `${authorDisplayName} from ${originalMessage.guild.name}`,
+          icon_url: originalMessage.author.displayAvatarURL()
+        },
+        description: translatedContent,
+        color: 7506394,
+      }
     }
+  }
 
-    async getAuthorDisplayName(message) {
-        const member = await message.guild.member(message.author);
-        return member && member.nickname ? member.nickname : message.author.username;
+  async getAuthorDisplayName(message) {
+    const member = await message.guild.member(message.author);
+    return member && member.nickname ? member.nickname : message.author.username;
+  }
+
+  async log(lines) {
+    lines.forEach(line => console.log(line));
+    const logChannel = this.getChannel(this.loggerId);
+    if (logChannel) {
+      await logChannel.send(lines.join('\r'));
     }
+  }
 
-    async log(lines) {
-        lines.forEach(line => console.log(line));
-        const logChannel = this.getChannel(this.loggerId);
-        if (logChannel) {
-            await logChannel.send(lines.join('\r'));
-        }
-    }
+  async onReady() {
+    const lines = [`Bot is ready.`];
+    Object.entries(this.rules).forEach(([sender, receivers]) => {
+      receivers.forEach(receiver => {
+        const from = this.formatChannel(this.getChannel(sender));
+        const to = this.formatChannel(this.getChannel(receiver.id));
+        lines.push(`${from} => ${to}`)
+      });
+    });
+    await this.log(lines);
+  }
 
-    async onReady() {
-        const lines = [`Bot is ready.`];
-        Object.entries(this.rules).forEach(([sender, receivers]) => {
-            receivers.forEach(receiver => {
-                const from = this.formatChannel(this.getChannel(sender));
-                const to = this.formatChannel(this.getChannel(receiver.id));
-                lines.push(`${from} => ${to}`)
-            });
+  preprocess(message, replaceList) {
+      const messageBefore = message;
+      for (const item of replaceList) {
+        message = message.replace(item.match, ` ${item.replace} `);
+      }
+      const messageAfter = message;
+      this.log(['preprocess message', messageBefore, messageAfter]);
+      return messageAfter;
+  }
+
+  async translate(message) {
+    const url = 'https://api.cognitive.microsofttranslator.com/translate';
+    try {
+      const response = await axios.post(url, [
+        { 'Text': message }
+      ], {
+          headers: {
+            'Content-Type': 'application/json',
+            'Ocp-Apim-Subscription-Key': this.accessKey,
+            'Ocp-Apim-Subscription-Region': this.accessRegion
+          },
+          params: {
+            'api-version': '3.0',
+            'from': 'ja',
+            'to': 'en'
+          }
         });
-        await this.log(lines);
+      const translations = response.data[0]['translations'];
+      const translation = translations.find(t => t.to === 'en');
+
+      await this.log([JSON.stringify(translation)]);
+      return translation.text;
+    } catch (err) {
+      await this.log([`translation error: ${err.message}`]);
+      return message;
     }
+  }
 
-    async onMessage(message) {
-        if (message.author.bot) {
-            return;
-        }
-        const guildChannelId = `${message.channel.guild.id}/${message.channel.id}`
-        const receivers = this.rules[guildChannelId];
-        if (!receivers) {
-            return;
-        }
-        if (message.content.match(this.REGEX_MESSAGE)) {
-            const lines = [`Forward new message.`].concat(message.content.split('\r'));
-            lines.push(`From: ${message.channel.name}(${message.channel.guild.name})`);
-            const toList = [];
-
-            const authorDisplayName = await this.getAuthorDisplayName(message);
-
-            await Promise.all(receivers.map(async (receiver) => {
-                const channel = this.getChannel(receiver.id);
-                if (channel) {
-                    const newMessage = this.generateForwardingMessage(message, authorDisplayName, channel.guild.id == message.channel.guild.id);
-                    const msg = await channel.send(
-                        receiver.mentionIds ?
-                            `${this.formatMentionIds(receiver.mentionIds)}\r${message.content}` :
-                            `${message.content}`,
-                        newMessage);
-                    lines.push(`To:   ${channel.name}(${channel.guild.name})`);
-                    toList.push({
-                        guild: channel.guild.id,
-                        channel: channel.id,
-                        message: msg.id,
-                        mentionIds: receiver.mentionIds
-                    });
-                }
-            }));
-            this.forwardedMessageMap.push({
-                guild: message.channel.guild.id,
-                channel: message.channel.id,
-                message: message.id,
-                to: toList
-            });
-            if (this.forwardedMessageMap.length > 100) {
-                this.forwardedMessageMap.shift();
-            }
-            await this.log(lines);
-        }
+  async onMessage(message) {
+    if (message.author.bot) {
+      return;
     }
-    async onMessageUpdate(oldMessage, message) {
-        if (message.author.bot) {
-            return;
-        }
-        const guildChannelId = `${message.channel.guild.id}/${message.channel.id}`
-        const receivers = this.rules[guildChannelId];
-        if (!receivers) {
-            return;
-        }
-        const forward = this.forwardedMessageMap.find(
-            m => m.guild == message.channel.guild.id &&
-                m.channel == message.channel.id &&
-                m.message == message.id
-        );
-        if (forward) {
-            const lines = [`Modify message.`].concat(message.content.split('\r'));
-
-            const authorDisplayName = await this.getAuthorDisplayName(message);
-
-            await Promise.all(forward.to.map(async (to) => {
-                const channel = this.getChannel(to.guild, to.channel);
-                if (channel) {
-                    const msg = channel.messages.cache.get(to.message);
-                    if (msg) {
-                        const newMessage = this.generateForwardingMessage(message, authorDisplayName, channel.guild.id == message.channel.guild.id);
-                        await msg.edit(
-                            to.mentionIds ?
-                                `${this.formatMentionIds(to.mentionIds)}\r${message.content}` :
-                                `${message.content}`,
-                            newMessage);
-                    }
-                }
-            }));
-            await this.log(lines);
-        }
+    const guildChannelId = `${message.channel.guild.id}/${message.channel.id}`
+    const receivers = this.rules[guildChannelId];
+    const replaceList = this.replaceList[guildChannelId];
+    if (!receivers) {
+      return;
     }
-    async onMessageDelete(message) {
-        if (message.author.bot) {
-            return;
+    if (message.content.match(this.REGEX_MESSAGE)) {
+      const lines = [`Forward new message.`].concat(message.content.split('\r'));
+      lines.push(`From: ${message.channel.name}(${message.channel.guild.name})`);
+      const toList = [];
+
+      const authorDisplayName = await this.getAuthorDisplayName(message);
+
+      await Promise.all(receivers.map(async (receiver) => {
+        const channel = this.getChannel(receiver.id);
+        if (channel) {
+          const translatedContent = receiver.translate ? await this.translate(this.preprocess(message.content, replaceList)) : '';
+          const newMessage = this.generateForwardingMessage(message, authorDisplayName, channel.guild.id == message.channel.guild.id, translatedContent);
+          const msg = await channel.send(
+            receiver.mentionIds ?
+              `${this.formatMentionIds(receiver.mentionIds)}\r${message.content}` :
+              `${message.content}`,
+            newMessage);
+          lines.push(`To:   ${channel.name}(${channel.guild.name})`);
+          toList.push({
+            guild: channel.guild.id,
+            channel: channel.id,
+            message: msg.id,
+            mentionIds: receiver.mentionIds,
+            translate: receiver.translate
+          });
         }
-        const guildChannelId = `${message.channel.guild.id}/${message.channel.id}`
-        const receivers = this.rules[guildChannelId];
-        if (!receivers) {
-            return;
-        }
-        const forward = this.forwardedMessageMap.find(
-            m => m.guild == message.channel.guild.id &&
-                m.channel == message.channel.id &&
-                m.message == message.id
-        );
-        if (forward) {
-            const lines = [`Delete message.`].concat(message.content.split('\r'));
-            await Promise.all(forward.to.map(async (to) => {
-                const channel = this.getChannel(to.guild, to.channel);
-                if (channel) {
-                    const msg = channel.messages.cache.get(to.message);
-                    if (msg) {
-                        await msg.delete();
-                    }
-                }
-            }));
-            await this.log(lines);
-        }
+      }));
+      this.forwardedMessageMap.push({
+        guild: message.channel.guild.id,
+        channel: message.channel.id,
+        message: message.id,
+        to: toList
+      });
+      if (this.forwardedMessageMap.length > 100) {
+        this.forwardedMessageMap.shift();
+      }
+      await this.log(lines);
     }
-
-    login(token) {
-        this.client.on('ready', () => {
-            this.onReady();
-        });
-
-        this.client.on('message', message => {
-            this.onMessage(message);
-        });
-
-        this.client.on('messageUpdate', (oldMessage, message) => {
-            this.onMessageUpdate(oldMessage, message);
-        });
-
-        this.client.on('messageDelete', (message) => {
-            this.onMessageDelete(message);
-        });
-
-        this.client.login(token);
+  }
+  async onMessageUpdate(oldMessage, message) {
+    if (message.author.bot) {
+      return;
     }
+    const guildChannelId = `${message.channel.guild.id}/${message.channel.id}`
+    const receivers = this.rules[guildChannelId];
+    const replaceList = this.replaceList[guildChannelId];
+    if (!receivers) {
+      return;
+    }
+    const forward = this.forwardedMessageMap.find(
+      m => m.guild == message.channel.guild.id &&
+        m.channel == message.channel.id &&
+        m.message == message.id
+    );
+    if (forward) {
+      const lines = [`Modify message.`].concat(message.content.split('\r'));
+
+      const authorDisplayName = await this.getAuthorDisplayName(message);
+
+      await Promise.all(forward.to.map(async (to) => {
+        const channel = this.getChannel(to.guild, to.channel);
+        if (channel) {
+          const msg = channel.messages.cache.get(to.message);
+          if (msg) {
+            const translatedContent = receiver.translate ? await this.translate(this.preprocess(message.content, replaceList)) : '';
+            const newMessage = this.generateForwardingMessage(message, authorDisplayName, channel.guild.id == message.channel.guild.id, translatedContent);
+            await msg.edit(
+              to.mentionIds ?
+                `${this.formatMentionIds(to.mentionIds)}\r${message.content}` :
+                `${message.content}`,
+              newMessage);
+          }
+        }
+      }));
+      await this.log(lines);
+    }
+  }
+  async onMessageDelete(message) {
+    if (message.author.bot) {
+      return;
+    }
+    const guildChannelId = `${message.channel.guild.id}/${message.channel.id}`
+    const receivers = this.rules[guildChannelId];
+    if (!receivers) {
+      return;
+    }
+    const forward = this.forwardedMessageMap.find(
+      m => m.guild == message.channel.guild.id &&
+        m.channel == message.channel.id &&
+        m.message == message.id
+    );
+    if (forward) {
+      const lines = [`Delete message.`].concat(message.content.split('\r'));
+      await Promise.all(forward.to.map(async (to) => {
+        const channel = this.getChannel(to.guild, to.channel);
+        if (channel) {
+          const msg = channel.messages.cache.get(to.message);
+          if (msg) {
+            await msg.delete();
+          }
+        }
+      }));
+      await this.log(lines);
+    }
+  }
+
+  login(token) {
+    this.client.on('ready', () => {
+      this.onReady();
+    });
+
+    this.client.on('message', message => {
+      this.onMessage(message);
+    });
+
+    this.client.on('messageUpdate', (oldMessage, message) => {
+      this.onMessageUpdate(oldMessage, message);
+    });
+
+    this.client.on('messageDelete', (message) => {
+      this.onMessageDelete(message);
+    });
+
+    this.client.login(token);
+  }
 }
