@@ -77,21 +77,16 @@ module.exports = class AToursBot {
     await this.log(lines);
   }
 
-  preprocess(message, replaceList) {
-      const messageBefore = message;
-      for (const item of replaceList) {
-        message = message.replace(item.match, ` ${item.replace} `);
-      }
-      const messageAfter = message;
-      this.log(['preprocess message', messageBefore, messageAfter]);
-      return messageAfter;
-  }
-
-  async translate(message) {
+  async translate(message, replaceList) {
     const url = 'https://api.cognitive.microsofttranslator.com/translate';
     try {
+      let preprocessMessage = message;
+      for (const item of replaceList) {
+        preprocessMessage = preprocessMessage.replace(item.match, ` _${item.key}_ `);
+      }
+
       const response = await axios.post(url, [
-        { 'Text': message }
+        { 'Text': preprocessMessage }
       ], {
           headers: {
             'Content-Type': 'application/json',
@@ -107,8 +102,15 @@ module.exports = class AToursBot {
       const translations = response.data[0]['translations'];
       const translation = translations.find(t => t.to === 'en');
 
-      await this.log([JSON.stringify(translation)]);
-      return translation.text;
+      const translatedMessage = translation.text;
+
+      let postprocessMessage = translatedMessage;
+      for (const item of replaceList) {
+        postprocessMessage = postprocessMessage.split(`_${item.key}_`).join(item.replace);
+      }
+
+      await this.log([preprocessMessage, translatedMessage, postprocessMessage]);
+      return postprocessMessage;
     } catch (err) {
       await this.log([`translation error: ${err.message}`]);
       return message;
@@ -135,7 +137,7 @@ module.exports = class AToursBot {
       await Promise.all(receivers.map(async (receiver) => {
         const channel = this.getChannel(receiver.id);
         if (channel) {
-          const translatedContent = receiver.translate ? await this.translate(this.preprocess(message.content, replaceList)) : '';
+          const translatedContent = receiver.translate ? await this.translate(message.content, replaceList) : '';
           const newMessage = this.generateForwardingMessage(message, authorDisplayName, channel.guild.id == message.channel.guild.id, translatedContent);
           const msg = await channel.send(
             receiver.mentionIds ?
@@ -189,7 +191,7 @@ module.exports = class AToursBot {
         if (channel) {
           const msg = channel.messages.cache.get(to.message);
           if (msg) {
-            const translatedContent = to.translate ? await this.translate(this.preprocess(message.content, replaceList)) : '';
+            const translatedContent = to.translate ? await this.translate(message.content, replaceList) : '';
             const newMessage = this.generateForwardingMessage(message, authorDisplayName, channel.guild.id == message.channel.guild.id, translatedContent);
             await msg.edit(
               to.mentionIds ?
