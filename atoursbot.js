@@ -14,7 +14,7 @@ module.exports = class AToursBot {
     this.accessRegion = accessRegion;
   }
 
-  addRule(senderId, receivers, replaceList=[]) {
+  addRule(senderId, receivers, replaceList = []) {
     this.rules[senderId] = receivers;
     this.replaceList[senderId] = replaceList;
   }
@@ -119,6 +119,15 @@ module.exports = class AToursBot {
 
   async onMessage(message) {
     if (message.author.bot) {
+      if (message.channel.type === 'news') {
+        try {
+          await message.crosspost()
+          await this.log([`published message.content: ${message.content}`])
+        }
+        catch (err) {
+          await this.log([`error: ${err.message}`])
+        }
+      }
       return;
     }
     const guildChannelId = `${message.channel.guild.id}/${message.channel.id}`
@@ -134,11 +143,15 @@ module.exports = class AToursBot {
 
       const authorDisplayName = await this.getAuthorDisplayName(message);
 
+      let translatedContent = message.content;
+      if (receivers.some(receiver => receiver.translate)) {
+        translatedContent = await this.translate(message.content, replaceList);
+      }
+
       await Promise.all(receivers.map(async (receiver) => {
         const channel = this.getChannel(receiver.id);
         if (channel) {
-          const translatedContent = receiver.translate ? await this.translate(message.content, replaceList) : '';
-          const newMessage = this.generateForwardingMessage(message, authorDisplayName, channel.guild.id == message.channel.guild.id, translatedContent);
+          const newMessage = this.generateForwardingMessage(message, authorDisplayName, channel.guild.id == message.channel.guild.id, receiver.translate ? translatedContent : '');
           const msg = await channel.send(
             receiver.mentionIds ?
               `${this.formatMentionIds(receiver.mentionIds)}\r${message.content}` :
@@ -186,13 +199,17 @@ module.exports = class AToursBot {
 
       const authorDisplayName = await this.getAuthorDisplayName(message);
 
+      let translatedContent = message.content;
+      if (forward.to.some(to => to.translate)) {
+        translatedContent = await this.translate(message.content, replaceList);
+      }
+
       await Promise.all(forward.to.map(async (to) => {
         const channel = this.getChannel(to.guild, to.channel);
         if (channel) {
           const msg = channel.messages.cache.get(to.message);
           if (msg) {
-            const translatedContent = to.translate ? await this.translate(message.content, replaceList) : '';
-            const newMessage = this.generateForwardingMessage(message, authorDisplayName, channel.guild.id == message.channel.guild.id, translatedContent);
+            const newMessage = this.generateForwardingMessage(message, authorDisplayName, channel.guild.id == message.channel.guild.id, to.translate ? translatedContent : '');
             await msg.edit(
               to.mentionIds ?
                 `${this.formatMentionIds(to.mentionIds)}\r${message.content}` :
