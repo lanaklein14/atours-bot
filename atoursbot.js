@@ -1,5 +1,9 @@
 const Discord = require('discord.js');
 const axios = require('axios');
+const dayjs = require('dayjs')
+dayjs.extend(require('dayjs/plugin/timezone'))
+dayjs.extend(require('dayjs/plugin/utc'))
+dayjs.tz.setDefault('Asia/Tokyo')
 
 module.exports = class AToursBot {
   constructor(loggerId, accessKey, accessRegion) {
@@ -152,6 +156,13 @@ module.exports = class AToursBot {
         const channel = this.getChannel(receiver.id);
         if (channel) {
           const newMessage = this.generateForwardingMessage(message, authorDisplayName, channel.guild.id == message.channel.guild.id, receiver.translate ? translatedContent : '');
+          if (channel.type === 'news') {
+            newMessage.embed.fields = [{
+              name: 'Created At',
+              value: dayjs(message.createdAt).tz('Asia/Tokyo').format('MM/DD HH:mm JST'),
+              inline: true
+            }]
+          }
           const msg = await channel.send(
             receiver.mentionIds ?
               `${this.formatMentionIds(receiver.mentionIds)}\r${message.content}` :
@@ -210,6 +221,17 @@ module.exports = class AToursBot {
           const msg = channel.messages.cache.get(to.message);
           if (msg) {
             const newMessage = this.generateForwardingMessage(message, authorDisplayName, channel.guild.id == message.channel.guild.id, to.translate ? translatedContent : '');
+            if (channel.type === 'news') {
+              newMessage.embed.fields = [{
+                name: 'Created At',
+                value: dayjs(message.createdAt).tz('Asia/Tokyo').format('MM/DD HH:mm JST'),
+                inline: true
+              }, {
+                name: 'Edited At',
+                value: dayjs(message.editedAt).tz('Asia/Tokyo').format('MM/DD HH:mm JST'),
+                inline: true
+              }]
+            }
             await msg.edit(
               to.mentionIds ?
                 `${this.formatMentionIds(to.mentionIds)}\r${message.content}` :

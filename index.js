@@ -124,6 +124,10 @@ aToursBot.addRule(
     id: '807729013396471879/840753867037605889',
     mentionIds: [],
     translate: true
+  },{
+    id: '807729013396471879/860733578526588958',
+    mentionIds: [],
+    translate: true
   }],
   replaceList.concat(replaceListGaia)
 );
@@ -134,6 +138,10 @@ aToursBot.addRule(
   [{
     id: '807729013396471879/809112741771739197',
     mentionIds: ['809125177060884551'],
+  },{
+    id: '807729013396471879/860733648746446888',
+    mentionIds: [],
+    translate: true
   }]
 );
 
